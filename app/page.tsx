@@ -171,7 +171,7 @@ export default function Home() {
       const userMsg: ChatMessage = {
         id: uuid(),
         role: 'user',
-        content: `Tell me more about: **${suggestion.title}**\n\n${suggestion.detail}`,
+        content: suggestion.title,
         timestamp: new Date(),
       };
       const assistantMsg: ChatMessage = {
@@ -184,9 +184,12 @@ export default function Home() {
 
       setChatMessages((prev) => [...prev, userMsg, assistantMsg]);
 
+      const detailSystem =
+        `${settings.detailPrompt}\n\nThe user clicked this suggestion card:\nTitle: ${suggestion.title}\nPreview: ${suggestion.detail}`;
+
       await streamChat(
         assistantMsg.id,
-        settings.detailPrompt,
+        detailSystem,
         [
           ...chatMessages.map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content })),
           { role: 'user', content: userMsg.content },

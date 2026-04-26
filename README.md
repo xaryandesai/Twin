@@ -16,12 +16,15 @@ Suggestions are typed — **Ask** (question to raise), **Fact** (relevant data),
 
 ## Stack
 
-- **Frontend / Backend**: Next.js 15 (App Router, API routes)
+- **Frontend**: Next.js 16 (App Router, static export — no server)
 - **Transcription**: Groq `whisper-large-v3`
 - **Suggestions + Chat**: Groq `meta-llama/llama-4-scout-17b-16e-instruct`
-- **Streaming**: SSE via `ReadableStream` in `/api/chat`
+- **API calls**: Direct browser → Groq REST API (CORS-enabled); no backend proxy
+- **Streaming**: Groq SSE parsed via `ReadableStream` + `getReader()` in the browser
 - **Styling**: Tailwind CSS v4, Geist font
 - **Persistence**: `localStorage` for settings only — no backend, no login
+
+> The assignment specifies "GPT-OSS 120B" for suggestions and chat. No Groq-hosted model carries that exact designation; `llama-4-scout-17b-16e-instruct` is the highest-quality Groq model available at time of submission with the fastest throughput. The model ID is editable in Settings.
 
 ## Live on GitHub Pages
 

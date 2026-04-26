@@ -9,6 +9,11 @@ import { ExportButton } from '@/components/ExportButton';
 import { useAudioRecorder } from '@/hooks/useAudioRecorder';
 import { useSettings } from '@/hooks/useSettings';
 import { TranscriptChunk, SuggestionBatch, ChatMessage, Suggestion } from '@/lib/types';
+import {
+  transcribeAudio,
+  generateSuggestions,
+  streamChatCompletion,
+} from '@/lib/groq-client';
 
 function uuid() {
   return crypto.randomUUID();
@@ -30,7 +35,6 @@ export default function Home() {
 
   const fullTranscript = transcriptChunks.map((c) => c.text).join(' ');
 
-  // Keep transcript ref in sync for timer callbacks
   useEffect(() => {
     transcriptRef.current = fullTranscript;
   }, [fullTranscript]);
@@ -40,34 +44,26 @@ export default function Home() {
       if (!settings.groqApiKey || !transcript.trim()) return;
       setIsFetchingSuggestions(true);
       try {
-        const res = await fetch('/api/suggestions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-groq-api-key': settings.groqApiKey,
-          },
-          body: JSON.stringify({
-            transcript,
-            prompt: settings.suggestionsPrompt,
-            model: settings.suggestionModel,
-            contextChars: settings.suggestionContextChars,
-          }),
-        });
-
-        const data = await res.json();
-        if (data.suggestions?.length > 0) {
+        const suggestions = await generateSuggestions(
+          settings.groqApiKey,
+          transcript,
+          settings.suggestionsPrompt,
+          settings.suggestionModel,
+          settings.suggestionContextChars
+        );
+        if (suggestions.length > 0) {
           setSuggestionBatches((prev) => [
             ...prev,
             {
               id: uuid(),
-              suggestions: data.suggestions,
+              suggestions,
               timestamp: new Date(),
               transcriptContext: transcript.slice(-settings.suggestionContextChars),
             },
           ]);
         }
       } catch {
-        // suggestions are non-critical
+        // suggestions are non-critical; fail silently
       } finally {
         setIsFetchingSuggestions(false);
       }
@@ -75,31 +71,20 @@ export default function Home() {
     [settings.groqApiKey, settings.suggestionModel, settings.suggestionsPrompt, settings.suggestionContextChars]
   );
 
-  const transcribeChunk = useCallback(
+  const handleAudioChunk = useCallback(
     async (blob: Blob) => {
       if (!settings.groqApiKey) return;
       setIsTranscribing(true);
       try {
-        const formData = new FormData();
-        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
-        formData.append('audio', blob, `audio.${ext}`);
-        formData.append('model', settings.transcriptionModel);
-
-        const res = await fetch('/api/transcribe', {
-          method: 'POST',
-          headers: { 'x-groq-api-key': settings.groqApiKey },
-          body: formData,
-        });
-
-        const data = await res.json();
-        if (data.text?.trim()) {
+        const text = await transcribeAudio(settings.groqApiKey, blob, settings.transcriptionModel);
+        if (text.trim()) {
           setTranscriptChunks((prev) => [
             ...prev,
-            { id: uuid(), text: data.text.trim(), timestamp: new Date() },
+            { id: uuid(), text: text.trim(), timestamp: new Date() },
           ]);
         }
       } catch {
-        // silently ignore — don't break recording
+        // silently ignore — don't break the recording flow
       } finally {
         setIsTranscribing(false);
       }
@@ -109,7 +94,7 @@ export default function Home() {
 
   const { isRecording, startRecording, stopRecording } = useAudioRecorder({
     chunkDurationMs: 30000,
-    onChunk: ({ blob }) => transcribeChunk(blob),
+    onChunk: ({ blob }) => handleAudioChunk(blob),
     onError: (err) => setMicError(err),
   });
 
@@ -117,7 +102,7 @@ export default function Home() {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
 
-  // Auto-refresh suggestions while recording
+  // Auto-refresh suggestions every N seconds while recording
   useEffect(() => {
     if (isRecording) {
       suggestionTimerRef.current = setInterval(() => {
@@ -148,59 +133,26 @@ export default function Home() {
     ) => {
       setIsChatStreaming(true);
       try {
-        const res = await fetch('/api/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-groq-api-key': settings.groqApiKey,
-          },
-          body: JSON.stringify({
-            messages,
-            systemPrompt,
-            transcript: transcriptRef.current,
-            model: settings.chatModel,
-            contextChars: settings.chatContextChars,
-          }),
-        });
+        const generator = streamChatCompletion(
+          settings.groqApiKey,
+          messages,
+          systemPrompt,
+          transcriptRef.current,
+          settings.chatModel,
+          settings.chatContextChars
+        );
 
-        if (!res.body) throw new Error('No response body');
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
-            const payload = line.slice(6).trim();
-            if (payload === '[DONE]') break;
-            try {
-              const { delta } = JSON.parse(payload);
-              if (delta) {
-                setChatMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantMsgId ? { ...m, content: m.content + delta } : m
-                  )
-                );
-              }
-            } catch {
-              // skip malformed SSE lines
-            }
-          }
+        for await (const delta of generator) {
+          setChatMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantMsgId ? { ...m, content: m.content + delta } : m
+            )
+          );
         }
       } catch (err) {
         const errorText = err instanceof Error ? err.message : 'Chat failed';
         setChatMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId ? { ...m, content: errorText } : m
-          )
+          prev.map((m) => (m.id === assistantMsgId ? { ...m, content: errorText } : m))
         );
       } finally {
         setChatMessages((prev) =>
@@ -277,6 +229,7 @@ export default function Home() {
     startRecording();
   };
 
+  // Open settings on first load if no API key
   useEffect(() => {
     if (loaded && !settings.groqApiKey) setSettingsOpen(true);
   }, [loaded, settings.groqApiKey]);

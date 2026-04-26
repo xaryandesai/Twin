@@ -23,18 +23,29 @@ Suggestions are typed — **Ask** (question to raise), **Fact** (relevant data),
 - **Styling**: Tailwind CSS v4, Geist font
 - **Persistence**: `localStorage` for settings only — no backend, no login
 
-## Setup
+## Live on GitHub Pages
+
+The app is a fully static site — no server required. All Groq API calls are made directly from the browser.
+
+### One-time GitHub Pages setup
+
+1. Push this repo to GitHub
+2. Go to **Settings → Pages** in your GitHub repo
+3. Under **Source**, select **GitHub Actions**
+4. Push any commit to `main` — the workflow in `.github/workflows/deploy.yml` builds and deploys automatically
+
+The site will be live at `https://<your-username>.github.io/Twin/` within ~60 seconds of the first push.
+
+### Local development
 
 ```bash
-git clone <repo>
-cd Twin
 npm install
 npm run dev
 ```
 
 Open `http://localhost:3000`, click **Settings**, paste your [Groq API key](https://console.groq.com/keys), and start recording.
 
-No `.env` file needed — the key lives only in your browser's `localStorage`.
+No `.env` file needed — the API key lives only in your browser's `localStorage` and is sent directly to Groq from your browser.
 
 ## Prompt Strategy
 
